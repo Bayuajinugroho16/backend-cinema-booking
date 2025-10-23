@@ -2,6 +2,7 @@
   "name": "cinema-booking-server",
   "version": "1.0.0",
   "description": "Backend for cinema booking system with MySQL",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -25,3 +26,4 @@
     "nodemon": "^3.0.1"
   }
 }
+  

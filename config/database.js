@@ -3,13 +3,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Railway menggunakan MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE, MYSQLPORT
+// 🔧 Konfigurasi koneksi MySQL
 const dbConfig = {
-  host: process.env.MYSQLHOST || 'localhost',
+  host: process.env.MYSQLHOST,       // ✅ host internal Railway
   port: process.env.MYSQLPORT || 3306,
-  user: process.env.MYSQLUSER || 'root',
-  password: process.env.MYSQLPASSWORD || '',
-  database: process.env.MYSQLDATABASE || 'cinema_booking',
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE, // ✅ bukan DB_NAME
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
@@ -17,60 +17,54 @@ const dbConfig = {
 
 const pool = mysql.createPool(dbConfig);
 
+// 🔍 Log koneksi awal
 pool.getConnection((err, connection) => {
   if (err) {
     console.error('❌ Database connection failed:', err.message);
-    console.log('🔧 Database config:', {
+    console.table({
       host: dbConfig.host,
       port: dbConfig.port,
       user: dbConfig.user,
-      database: dbConfig.database
+      database: dbConfig.database,
     });
   } else {
-    console.log('✅ Connected to MySQL database on Railway');
+    console.log('✅ Connected to MySQL database');
     console.log(`📊 Database: ${dbConfig.database}`);
+    console.log(`🌐 Host: ${dbConfig.host}:${dbConfig.port}`);
     connection.release();
   }
 });
 
-// Enhanced connection test
-const testConnection = () => {
+// 🔁 Uji koneksi ringan
+export const testConnection = () => {
   pool.getConnection((err, connection) => {
     if (err) {
-      console.error('❌ Database connection failed:', err.message);
-    } else {
-      console.log('✅ Connected to MySQL database successfully!');
-      console.log(`📊 Database: ${dbConfig.database}`);
-      console.log(`🌐 Host: ${dbConfig.host}`);
-      
-      // Simple SQL query
-      connection.query('SELECT 1 + 1 AS test_result', (queryErr, results) => {
-        if (queryErr) {
-          console.error('❌ Query test failed:', queryErr.message);
-        } else {
-          console.log('✅ Database query test successful:', results[0].test_result);
-        }
-        connection.release();
-      });
+      console.error('❌ Database test connection failed:', err.message);
+      return;
     }
+    connection.query('SELECT NOW() AS now', (queryErr, results) => {
+      if (queryErr) {
+        console.error('❌ Test query failed:', queryErr.message);
+      } else {
+        console.log('✅ Test query successful:', results[0].now);
+      }
+      connection.release();
+    });
   });
 };
 
-// Handle connection errors
+// 🔄 Tangani error pool agar auto-reconnect
 pool.on('error', (err) => {
-  console.error('💥 Database pool error:', err);
-  
-  // Try to reconnect after 2 seconds
+  console.error('💥 MySQL pool error:', err);
   setTimeout(() => {
-    console.log('🔄 Attempting to reconnect to database...');
+    console.log('🔄 Reconnecting to database...');
     testConnection();
-  }, 2000);
+  }, 3000);
 });
 
-// Auto-test connection saat startup
+// ✅ Jalankan test otomatis saat startup
 if (process.env.NODE_ENV !== 'test') {
   testConnection();
 }
 
-// ✅ ES MODULES EXPORT
-export { pool, testConnection };
+export { pool };
