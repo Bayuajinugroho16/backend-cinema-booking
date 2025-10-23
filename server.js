@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
-const WebSocket = require('ws');
+// const WebSocket = require('ws');
 const authRoutes = require('./routes/auth');
 
 
@@ -21,11 +21,11 @@ app.use('/api/auth', authRoutes);
 // ✅ BUAT HTTP SERVER DARI EXPRESS APP
 const server = http.createServer(app);
 
-// ✅ WEBSOCKET SERVER MENGGUNAKAN SERVER YANG SAMA
-const wss = new WebSocket.Server({ 
-  server, // Gunakan server HTTP yang sama
-  path: '/ws' // Optional: path khusus untuk WebSocket
-});
+// // ✅ WEBSOCKET SERVER MENGGUNAKAN SERVER YANG SAMA
+// const wss = new WebSocket.Server({ 
+//   server, // Gunakan server HTTP yang sama
+//   path: '/ws' // Optional: path khusus untuk WebSocket
+// });
 
 // Store connected clients per showtime
 const clients = new Map();

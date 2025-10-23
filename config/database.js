@@ -3,17 +3,17 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// 🔧 Konfigurasi koneksi MySQL
-const dbConfig = {
-  host: process.env.MYSQLHOST,       // ✅ host internal Railway
-  port: process.env.MYSQLPORT || 3306,
-  user: process.env.MYSQLUSER,
-  password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE, // ✅ bukan DB_NAME
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-};
+  // 🔧 Konfigurasi koneksi MySQL
+  const dbConfig = {
+    host: process.env.MYSQLHOST,       // ✅ host internal Railway
+    port: process.env.MYSQLPORT || 3306,
+    user: process.env.MYSQLUSER,
+    password: process.env.MYSQLPASSWORD,
+    database: process.env.MYSQLDATABASE, // ✅ bukan DB_NAME
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  };
 
 const pool = mysql.createPool(dbConfig);
 
