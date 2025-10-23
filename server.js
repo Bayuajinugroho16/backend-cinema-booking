@@ -74,9 +74,6 @@ app.use('*', (req, res) => {
   });
 });
 
-// ✅ PRODUCTION OPTIMIZATIONS
-const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
-
 // ✅ HEALTH CHECK ENDPOINT
 app.get('/health', (req, res) => {
   res.json({
