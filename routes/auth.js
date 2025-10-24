@@ -2,27 +2,41 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/database');
-const router = express.Router(); // ✅ INI YANG DITAMBAHKAN
+const router = express.Router();
 
-// User Login - FIXED
-// User Login - FIXED VERSION (Handles both plain text and hashed passwords)
+// Input validation helper
+const validateInput = (input) => {
+  return typeof input === 'string' && input.trim().length > 0;
+};
+
+// User Login - OPTIMIZED VERSION
 router.post('/login', async (req, res) => {
-  let connection; // ✅ DEKLARASIKAN CONNECTION
+  let connection;
+  
   try {
     const { username, password } = req.body;
-    console.log('🔐 Login attempt for:', username); // ✅ GUNAKAN USERNAME
+    
+    // ✅ Validasi input
+    if (!validateInput(username) || !validateInput(password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username and password are required'
+      });
+    }
+    
+    console.log('🔐 Login attempt for:', username);
     
     connection = await pool.promise().getConnection();
     
-    // Find user by username
+    // ✅ Find user by username dengan kolom yang spesifik (hindari SELECT *)
     const [users] = await connection.execute(
-      'SELECT * FROM users WHERE username = ?',
-      [username] // ✅ GUNAKAN USERNAME
+      'SELECT id, username, email, password, role, phone FROM users WHERE username = ?',
+      [username.trim()]
     );
     
     if (users.length === 0) {
       console.log('❌ User not found:', username);
-      return res.status(400).json({
+      return res.status(401).json({ // ✅ 401 untuk unauthorized
         success: false,
         message: 'Invalid username or password'
       });
@@ -30,41 +44,56 @@ router.post('/login', async (req, res) => {
     
     const user = users[0];
     console.log('✅ User found:', user.username);
-    console.log('🔑 Stored password length:', user.password.length);
     
-    // ✅ SMART PASSWORD VALIDATION - HANDLES BOTH CASES
+    // ✅ ENHANCED PASSWORD VALIDATION
     let validPassword = false;
     
-    if (user.password.length <= 20) {
-      // Plain text password (short length)
-      console.log('🔓 Using plain text comparison');
-      validPassword = (password === user.password);
-    } else {
-      // Hashed password (bcrypt - 60 chars)
+    // Deteksi tipe password
+    const isLikelyHashed = user.password.length === 60 && user.password.startsWith('$2');
+    
+    if (isLikelyHashed) {
+      // Bcrypt hashed password
       console.log('🔐 Using bcrypt comparison');
       validPassword = await bcrypt.compare(password, user.password);
+    } else {
+      // Plain text password (for migration purposes)
+      console.log('🔓 Using plain text comparison');
+      validPassword = (password === user.password);
+      
+      // ✅ OPSIONAL: Auto-upgrade ke hashed password jika plain text terdeteksi
+      if (validPassword) {
+        console.log('🔄 Auto-upgrading plain text password to hash...');
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await connection.execute(
+          'UPDATE users SET password = ? WHERE id = ?',
+          [hashedPassword, user.id]
+        );
+        console.log('✅ Password upgraded to hash');
+      }
     }
-    
-    console.log('🔍 Password match:', validPassword);
     
     if (!validPassword) {
       console.log('❌ Password mismatch');
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
         message: 'Invalid username or password'
       });
     }
     
-    // Generate token
-    // Generate token
+    // ✅ Generate token dengan data yang lebih aman
     const token = jwt.sign(
-      { userId: user.id, role: user.role },
+      { 
+        userId: user.id, 
+        username: user.username,
+        role: user.role 
+      },
       process.env.JWT_SECRET || 'bioskop-tiket-secret-key',
       { expiresIn: '7d' }
     );
     
     console.log('🎉 Login successful for:', user.username);
     
+    // ✅ Response konsisten tanpa mengekspos password
     res.json({
       success: true,
       message: 'Login successful',
@@ -73,6 +102,7 @@ router.post('/login', async (req, res) => {
           id: user.id,
           username: user.username,
           email: user.email,
+          phone: user.phone,
           role: user.role
         },
         token
@@ -83,83 +113,113 @@ router.post('/login', async (req, res) => {
     console.error('💥 Login error:', error);
     res.status(500).json({
       success: false,
-      message: 'Login failed: ' + error.message
+      message: 'Internal server error during login'
+      // Jangan expose detail error ke client di production
     });
   } finally {
     if (connection) connection.release();
   }
 });
-
-
-// User Registration
+  
+// User Registration - TANPA AUTO LOGIN
 router.post('/register', async (req, res) => {
   let connection;
+  
   try {
     const { username, email, password, phone } = req.body;
     
-    console.log('📝 Registration attempt for:', email);
+    console.log('📝 Registration attempt for:', username);
     
-    // Validasi field yang diperlukan
-    if (!username || !email || !password || !phone) {
+    // ✅ VALIDASI
+    if (!validateInput(username) || !validateInput(password) || !validateInput(phone)) {
       return res.status(400).json({
         success: false,
-        message: 'All fields (username, email, password, phone) are required'
+        message: 'Username, password, dan nomor telepon harus diisi'
+      });
+    }
+    
+    // ✅ EMAIL OPSIONAL - GUNAKAN DEFAULT
+    const userEmail = email && email.trim() !== '' ? email.trim() : `${username}@no-email.com`;
+    
+    if (email && email.trim() !== '') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Format email tidak valid'
+        });
+      }
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password harus minimal 6 karakter'
       });
     }
     
     connection = await pool.promise().getConnection();
     
-    // Check if user exists
-    const [existingUsers] = await connection.execute(
-      'SELECT * FROM users WHERE email = ? OR username = ?',
-      [email, username]
-    );
+    await connection.beginTransaction();
     
-    if (existingUsers.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'User already exists'
+    try {
+      const [existingUsers] = await connection.execute(
+        'SELECT id FROM users WHERE username = ? OR email = ?',
+        [username.trim(), userEmail]
+      );
+      
+      if (existingUsers.length > 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: 'Username atau email sudah digunakan'
+        });
+      }
+      
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      const [result] = await connection.execute(
+        'INSERT INTO users (username, email, password, phone, role) VALUES (?, ?, ?, ?, ?)',
+        [username.trim(), userEmail, hashedPassword, phone.trim(), 'user']
+      );
+      
+      // ✅ HAPUS GENERATE TOKEN - TIDAK AUTO LOGIN
+      // const token = jwt.sign(...);
+      
+      await connection.commit();
+      
+      console.log('✅ User registered successfully:', username);
+      
+      res.status(201).json({
+        success: true,
+        message: 'Registrasi berhasil! Silakan login.',
+        data: {
+          user: {
+            id: result.insertId,
+            username: username.trim(),
+            email: userEmail,
+            phone: phone.trim(),
+            role: 'user'
+          }
+          // ✅ HAPUS TOKEN DARI RESPONSE
+          // token: token
+        }
       });
+      
+    } catch (transactionError) {
+      await connection.rollback();
+      throw transactionError;
     }
     
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Create user
-    const [result] = await connection.execute(
-      'INSERT INTO users (username, email, password, phone) VALUES (?, ?, ?, ?)',
-      [username, email, hashedPassword, phone]
-    );
-    
-    // Generate token
-    const token = jwt.sign(
-      { userId: result.insertId, role: 'user' },
-      process.env.JWT_SECRET || 'bioskop-tiket-secret-key',
-      { expiresIn: '7d' }
-    );
-    
-    res.json({
-      success: true,
-      message: 'User registered successfully',
-      data: {
-        user: {
-          id: result.insertId,
-          username: username,
-          email: email,
-          role: 'user'
-        },
-        token
-      }
-    });
-    
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('💥 Registration error:', error);
     res.status(500).json({
       success: false,
-      message: 'Registration failed: ' + error.message
+      message: 'Registrasi gagal: ' + error.message
     });
   } finally {
     if (connection) connection.release();
   }
 });
-module.exports = router; // ✅ JANGAN LUPA EXPORT
+
+module.exports = router;

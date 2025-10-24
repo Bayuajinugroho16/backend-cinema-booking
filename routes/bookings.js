@@ -478,155 +478,12 @@ router.post('/scan-ticket', async (req, res) => {
   }
 });
 
-// ✅ PERBAIKI BACKEND GET BOOKINGS - RETURN STRING, NOT ARRAY
-// ✅ PERBAIKI BACKEND GET BOOKINGS - WORKING VERSION
-router.get('/', async (req, res) => {
-  let connection;
-  try {
-    connection = await pool.promise().getConnection();
-    
-    const [bookings] = await connection.execute(`
-      SELECT * FROM bookings ORDER BY id DESC
-    `);
-
-    console.log('🔧 PROCESSING', bookings.length, 'BOOKINGS');
-    
-    const parsedBookings = bookings.map(booking => {
-      console.log(`\n🎫 Booking ${booking.id}:`, {
-        raw: booking.seat_numbers,
-        type: typeof booking.seat_numbers,
-        length: booking.seat_numbers?.length
-      });
-      
-      let seatNumbersString = '';
-
-      try {
-        // ✅ FIX: Handle semua kemungkinan format
-        if (!booking.seat_numbers || booking.seat_numbers === '[]' || booking.seat_numbers === '') {
-          console.log(`   ⚠️ Empty data`);
-          seatNumbersString = '';
-        } 
-        else {
-          // ✅ PASTIKAN parsing berhasil untuk format ["L3"]
-          const parsed = JSON.parse(booking.seat_numbers);
-          console.log(`   ✅ Parsed successfully:`, parsed);
-          
-          if (Array.isArray(parsed)) {
-            if (parsed.length > 0) {
-              // ✅ KONVERSI ARRAY KE STRING
-              seatNumbersString = parsed.join(', ');
-              console.log(`   🎯 Converted to string: "${seatNumbersString}"`);
-            } else {
-              console.log(`   ⚠️ Empty array after parsing`);
-              seatNumbersString = '';
-            }
-          } 
-          else if (parsed) {
-            // Single value
-            seatNumbersString = String(parsed);
-            console.log(`   🎯 Single seat: "${seatNumbersString}"`);
-          }
-        }
-      } 
-      catch (parseError) {
-        console.log(`   ❌ Parse error:`, parseError.message);
-        seatNumbersString = '';
-      }
-      
-      return {
-        ...booking,
-        seat_numbers: seatNumbersString
-      };
-    });
-
-    // ✅ FINAL VERIFICATION
-    console.log('\n📊 FINAL VERIFICATION:');
-    const withSeats = parsedBookings.filter(b => b.seat_numbers && b.seat_numbers !== '');
-    const withoutSeats = parsedBookings.filter(b => !b.seat_numbers || b.seat_numbers === '');
-    
-    console.log('   With seats:', withSeats.length);
-    console.log('   Without seats:', withoutSeats.length);
-    
-    withSeats.forEach(booking => {
-      console.log(`   ✅ ${booking.id}: "${booking.seat_numbers}"`);
-    });
-    
-    res.json({
-      success: true,
-      data: parsedBookings
-    });
-    
-  } catch (error) {
-    console.error('Error fetching bookings:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching bookings: ' + error.message
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-});
-
-// ✅ BACKEND DEBUG - SPESIFIK UNTUK `["L3"]`
-router.get('/debug-l3-parsing', async (req, res) => {
-  try {
-    const testData = '["L3"]'; // Data dari database
-    
-    console.log('🔍 DEBUG PARSING ["L3"]:');
-    console.log('Raw data:', testData);
-    console.log('Type:', typeof testData);
-    console.log('Length:', testData.length);
-    console.log('Char codes:');
-    for (let i = 0; i < testData.length; i++) {
-      console.log(`  [${i}]: '${testData[i]}' (code: ${testData.charCodeAt(i)})`);
-    }
-
-    // TEST 1: JSON.parse langsung
-    console.log('🧪 TEST 1 - JSON.parse:');
-    try {
-      const parsed1 = JSON.parse(testData);
-      console.log('  Result:', parsed1);
-      console.log('  Is array:', Array.isArray(parsed1));
-      console.log('  Array length:', Array.isArray(parsed1) ? parsed1.length : 'N/A');
-      console.log('  First element:', Array.isArray(parsed1) ? parsed1[0] : 'N/A');
-      console.log('  Join result:', Array.isArray(parsed1) ? parsed1.join(', ') : 'N/A');
-    } catch (e1) {
-      console.log('  ❌ Error:', e1.message);
-    }
-
-    // TEST 2: Manual parsing
-    console.log('🧪 TEST 2 - Manual parsing:');
-    const cleaned = testData.replace(/[\[\]"]/g, '');
-    console.log('  Cleaned:', cleaned);
-    const manualSeats = cleaned.split(',').filter(s => s.trim() !== '');
-    console.log('  Manual result:', manualSeats);
-    console.log('  Manual string:', manualSeats.join(', '));
-
-    res.json({
-      success: true,
-      tests: {
-        raw_data: testData,
-        json_parse: JSON.parse(testData),
-        manual_parse: manualSeats
-      }
-    });
-    
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error: ' + error.message
-    });
-  }
-});
-
-// ✅ GET USER BOOKINGS - MY TICKETS
+// ✅ PERBAIKI: HANDLE BUFFER/OBJECT SEAT NUMBERS
 router.get('/my-bookings', async (req, res) => {
   let connection;
   try {
-    // ✅ DAPATKAN USERNAME DARI TOKEN ATAU QUERY PARAM
-    const username = req.query.username || req.headers['username'] || req.user?.username;
-    
+    const username = req.query.username;
+
     console.log('👤 Fetching tickets for user:', username);
     
     if (!username) {
@@ -639,43 +496,118 @@ router.get('/my-bookings', async (req, res) => {
     
     connection = await pool.promise().getConnection();
     
-    const query = `
+    // ✅ QUERY REGULAR BOOKINGS
+    const regularBookingsQuery = `
       SELECT 
-        id,
-        booking_reference,
-        verification_code,
-        customer_name,
-        customer_email,
-        customer_phone,
-        total_amount,
-        seat_numbers,
-        status,
-        booking_date,
-        movie_title,
-        showtime_id,
-        is_verified,
-        verified_at,
-        qr_code_data
+        id, booking_reference, verification_code, customer_name,
+        customer_email, customer_phone, total_amount, seat_numbers,
+        status, booking_date, movie_title, showtime_id, is_verified,
+        verified_at, qr_code_data, 'regular' as order_type
       FROM bookings 
-      WHERE customer_name = ? OR customer_email = ?
+      WHERE (LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?))
+        AND booking_reference NOT LIKE 'BUNDLE-%'
       ORDER BY booking_date DESC
     `;
     
-    const [bookings] = await connection.execute(query, [username, username]);
+    const bundleOrdersQuery = `
+      SELECT 
+        id, order_reference as booking_reference, '' as verification_code,
+        customer_name, customer_email, customer_phone, total_price as total_amount,
+        '[]' as seat_numbers, status, order_date as booking_date,
+        bundle_name as movie_title, 0 as showtime_id, 0 as is_verified,
+        NULL as verified_at, NULL as qr_code_data, 'bundle' as order_type
+      FROM bundle_orders 
+      WHERE LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?)
+      ORDER BY order_date DESC
+    `;
     
-    console.log(`✅ Found ${bookings.length} bookings for ${username}`);
+    console.log('🔍 Executing queries for username:', username);
     
-    // Process the bookings data
-    const parsedBookings = bookings.map(booking => {
+    const [regularBookings] = await connection.execute(regularBookingsQuery, [username, username]);
+    const [bundleOrders] = await connection.execute(bundleOrdersQuery, [username, username]);
+    
+    console.log(`✅ Found ${regularBookings.length} regular bookings`);
+    console.log(`✅ Found ${bundleOrders.length} bundle orders`);
+    
+    const allOrders = [...regularBookings, ...bundleOrders];
+    
+    // ✅ PERBAIKI: HANDLE BUFFER/OBJECT SEAT NUMBERS
+    const parsedBookings = allOrders.map(booking => {
+      console.log(`🔍 Processing booking ${booking.id}:`, {
+        rawSeatNumbers: booking.seat_numbers,
+        type: typeof booking.seat_numbers,
+        isArray: Array.isArray(booking.seat_numbers),
+        isBuffer: Buffer.isBuffer(booking.seat_numbers)
+      });
+      
       let seatNumbers = [];
-      try {
-        seatNumbers = JSON.parse(booking.seat_numbers);
-      } catch (error) {
-        if (typeof booking.seat_numbers === 'string') {
-          seatNumbers = booking.seat_numbers.replace(/[\[\]"]/g, '').split(',').map(s => s.trim());
+      
+      if (booking.order_type === 'regular') {
+        try {
+          // ✅ HANDLE BERBAGAI FORMAT SEAT NUMBERS
+          if (Array.isArray(booking.seat_numbers)) {
+            // Jika sudah array, langsung pakai
+            console.log(`   ✅ Already array:`, booking.seat_numbers);
+            seatNumbers = booking.seat_numbers.filter(seat => 
+              seat !== null && seat !== undefined && String(seat).trim() !== ''
+            );
+          }
+          else if (Buffer.isBuffer(booking.seat_numbers)) {
+            // Jika Buffer, convert ke string dulu
+            console.log(`   🔄 Converting buffer to string`);
+            const bufferString = booking.seat_numbers.toString();
+            console.log(`   Buffer string:`, bufferString);
+            
+            // Coba parse sebagai JSON
+            try {
+              const parsed = JSON.parse(bufferString);
+              if (Array.isArray(parsed)) {
+                seatNumbers = parsed;
+              }
+            } catch (jsonError) {
+              // Jika bukan JSON, split sebagai string
+              const extracted = bufferString.replace(/[\[\]"]/g, '')
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s !== '');
+              seatNumbers = extracted;
+            }
+          }
+          else if (typeof booking.seat_numbers === 'string') {
+            // Jika string, coba parse JSON
+            console.log(`   🔄 Processing string:`, booking.seat_numbers);
+            try {
+              const parsed = JSON.parse(booking.seat_numbers);
+              if (Array.isArray(parsed)) {
+                seatNumbers = parsed;
+              }
+            } catch (jsonError) {
+              // Jika bukan JSON, split sebagai string biasa
+              const extracted = booking.seat_numbers.replace(/[\[\]"]/g, '')
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s !== '');
+              seatNumbers = extracted;
+            }
+          }
+          else if (booking.seat_numbers) {
+            // Fallback: convert ke array
+            console.log(`   🔄 Fallback conversion`);
+            seatNumbers = [String(booking.seat_numbers)];
+          }
+          
+          console.log(`   ✅ Final seats for ${booking.id}:`, seatNumbers);
+          
+        } catch (error) {
+          console.log(`❌ Error processing seats for ${booking.id}:`, error.message);
+          seatNumbers = [];
         }
+      } else {
+        // Bundle orders
+        seatNumbers = [];
       }
       
+      // Map showtime
       const showtimeMap = {
         1: '18:00 - Studio 1',
         2: '20:30 - Studio 1', 
@@ -694,14 +626,21 @@ router.get('/my-bookings', async (req, res) => {
       
       const statusInfo = statusMap[booking.status] || { text: booking.status, class: 'unknown' };
       
-     return {
+      let showtimeText;
+      if (booking.order_type === 'bundle') {
+        showtimeText = 'Bundle Ticket';
+      } else {
+        showtimeText = showtimeMap[booking.showtime_id] || `Showtime ${booking.showtime_id}`;
+      }
+      
+      return {
         id: booking.id,
         booking_reference: booking.booking_reference,
         verification_code: booking.verification_code,
         movie_title: booking.movie_title,
-        seat_numbers: seatNumbers,
+        seat_numbers: seatNumbers, // ✅ ARRAY YANG SUDAH DIPROSES
         showtime_id: booking.showtime_id,
-        showtime: showtimeMap[booking.showtime_id] || `Showtime ${booking.showtime_id}`,
+        showtime: showtimeText,
         total_amount: booking.total_amount,
         customer_name: booking.customer_name,
         customer_email: booking.customer_email,
@@ -713,6 +652,8 @@ router.get('/my-bookings', async (req, res) => {
         is_verified: booking.is_verified,
         verified_at: booking.verified_at,
         qr_code_data: booking.qr_code_data,
+        order_type: booking.order_type,
+        is_bundle: booking.order_type === 'bundle',
         formatted_booking_date: new Date(booking.booking_date).toLocaleDateString('id-ID', {
           weekday: 'long',
           year: 'numeric',
@@ -724,18 +665,35 @@ router.get('/my-bookings', async (req, res) => {
       };
     });
     
+    // ✅ FINAL DEBUG
+    console.log('📊 FINAL PROCESSED DATA:');
+    const withSeats = parsedBookings.filter(b => b.seat_numbers && b.seat_numbers.length > 0);
+    const withoutSeats = parsedBookings.filter(b => !b.seat_numbers || b.seat_numbers.length === 0);
+    
+    console.log(`   With seats: ${withSeats.length}`);
+    console.log(`   Without seats: ${withoutSeats.length}`);
+    
+    withSeats.forEach(booking => {
+      console.log(`   ✅ ${booking.id} (${booking.order_type}):`, {
+        movie: booking.movie_title,
+        seats: booking.seat_numbers
+      });
+    });
+    
     res.json({
       success: true,
       data: parsedBookings,
       summary: {
         total: parsedBookings.length,
+        regular: regularBookings.length,
+        bundle: bundleOrders.length,
         confirmed: parsedBookings.filter(b => b.status === 'confirmed').length,
         pending: parsedBookings.filter(b => b.status === 'pending').length,
         cancelled: parsedBookings.filter(b => b.status === 'cancelled').length
       }
     });
     
-} catch (error) {
+  } catch (error) {
     console.error('❌ ERROR in /my-bookings:', error);
     res.status(500).json({
       success: false,
@@ -746,9 +704,6 @@ router.get('/my-bookings', async (req, res) => {
     if (connection) connection.release();
   }
 });
-
-
-
 
 
 // Configure multer untuk file upload
@@ -899,10 +854,9 @@ router.get('/uploaded-payments', async (req, res) => {
   }
 });
 
-// ✅ BUNDLE - CREATE BUNDLE ORDER (NEW ENDPOINT)
-// ✅ BUNDLE - CREATE BUNDLE ORDER (FINAL FIX)
+// Di backend - routes/bookings.js
 router.post('/create-bundle-order', async (req, res) => {
-  let connection;
+  let connection; // ✅ DEKLARASIKAN CONNECTION
   try {
     const {
       order_reference,
@@ -916,198 +870,121 @@ router.post('/create-bundle-order', async (req, res) => {
       total_price,
       customer_name,
       customer_phone,
-      customer_email
+      customer_email,
+      payment_proof,
+      status = 'confirmed'
     } = req.body;
 
-    console.log('🎁 Creating bundle order:', { order_reference, bundle_name, customer_name });
+    console.log('📦 Creating bundle order:', {
+      order_reference,
+      bundle_name,
+      customer_name,
+      payment_proof: payment_proof ? 'Provided' : 'Missing',
+      status
+    });
 
-    // Validasi required fields
-    if (!order_reference || !bundle_name || !customer_name || !customer_phone || !customer_email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields'
-      });
-    }
-
+    // ✅ DAPATKAN KONEKSI DARI POOL
     connection = await pool.promise().getConnection();
 
-    // Cari atau buat showtime khusus untuk bundle
-    let bundleShowtimeId = null;
-    try {
-      // Cari movie_id yang ada untuk digunakan sebagai referensi
-      const [movies] = await connection.execute('SELECT id FROM movies LIMIT 1');
-      const movieId = movies.length > 0 ? movies[0].id : 1;
-      
-      // Cari theater_id yang ada
-      const [theaters] = await connection.execute('SELECT id FROM theaters LIMIT 1');
-      const theaterId = theaters.length > 0 ? theaters[0].id : 1;
-
-      // Cek apakah sudah ada showtime untuk bundle
-      const [existingShowtimes] = await connection.execute(
-        'SELECT id FROM showtimes WHERE movie_id = ? AND theater_id = ? AND start_time = "2024-01-01 12:00:00"',
-        [movieId, theaterId]
-      );
-
-      if (existingShowtimes.length > 0) {
-        bundleShowtimeId = existingShowtimes[0].id;
-        console.log('✅ Using existing bundle showtime_id:', bundleShowtimeId);
-      } else {
-        // Buat showtime khusus untuk bundle
-        const [showtimeResult] = await connection.execute(
-          `INSERT INTO showtimes (
-            movie_id, theater_id, start_time, end_time, price, available_seats
-          ) VALUES (?, ?, '2024-01-01 12:00:00', '2024-01-01 14:00:00', 0, 999)`,
-          [movieId, theaterId]
-        );
-        bundleShowtimeId = showtimeResult.insertId;
-        console.log('✅ Created bundle showtime with ID:', bundleShowtimeId);
-      }
-    } catch (showtimeError) {
-      console.log('❌ Error creating bundle showtime:', showtimeError.message);
-      // Fallback: cari showtime_id yang ada
-      const [showtimes] = await connection.execute('SELECT id FROM showtimes LIMIT 1');
-      bundleShowtimeId = showtimes.length > 0 ? showtimes[0].id : 1;
-      console.log('🔄 Using fallback showtime_id:', bundleShowtimeId);
-    }
-
-    // INSERT bundle order dengan showtime_id yang valid
-    const query = `
-      INSERT INTO bookings (
-        booking_reference,
-        customer_name,
-        customer_email,
-        customer_phone,
-        total_amount,
-        status,
-        payment_status,
-        movie_title,
-        order_type,
-        bundle_id,
-        bundle_name,
-        bundle_description,
-        original_price,
-        savings,
-        quantity,
-        showtime_id,
-        seat_numbers
-      ) VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, 'bundle', ?, ?, ?, ?, ?, ?, ?, '[]')
-    `;
-
-    const values = [
-      order_reference,
-      customer_name,
-      customer_email,
-      customer_phone,
-      total_price,
-      bundle_name, // untuk movie_title
-      bundle_id || null,
-      bundle_name,
-      bundle_description || null,
-      original_price || bundle_price,
-      savings || 0,
-      quantity || 1,
-      bundleShowtimeId // Gunakan showtime_id yang valid
-    ];
-
-    console.log('📝 Executing query with showtime_id:', bundleShowtimeId);
-
-    const [result] = await connection.execute(query, values);
+    const [result] = await connection.execute(
+      `INSERT INTO bundle_orders (
+        order_reference, bundle_id, bundle_name, bundle_description,
+        bundle_price, original_price, savings, quantity, total_price,
+        customer_name, customer_phone, customer_email, 
+        payment_proof, status, order_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        order_reference, bundle_id, bundle_name, bundle_description,
+        bundle_price, original_price, savings, quantity, total_price,
+        customer_name, customer_phone, customer_email,
+        payment_proof, status
+      ]
+    );
 
     console.log('✅ Bundle order created with ID:', result.insertId);
 
-    // Get the created order
+    // Ambil data yang baru dibuat untuk konfirmasi
     const [orders] = await connection.execute(
-      'SELECT * FROM bookings WHERE id = ?',
+      'SELECT * FROM bundle_orders WHERE id = ?',
       [result.insertId]
     );
 
     res.json({
       success: true,
       message: 'Bundle order created successfully',
-      orderId: result.insertId,
-      orderReference: order_reference,
-      data: orders[0]
+      data: orders[0],
+      orderId: result.insertId
     });
 
   } catch (error) {
-    console.error('❌ Bundle order creation error:', error);
-    
+    console.error('❌ Error creating bundle order:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create bundle order: ' + error.message,
-      sqlError: error.sqlMessage
+      message: 'Failed to create bundle order: ' + error.message
     });
   } finally {
-    if (connection) connection.release();
+    if (connection) connection.release(); // ✅ RELEASE CONNECTION
   }
 });
 
-// ✅ BUNDLE - UPLOAD PAYMENT PROOF (NEW ENDPOINT)
-router.post('/bundle-upload-payment', upload.single('payment_proof'), async (req, res) => {
-  let connection;
+
+
+// ✅ BUNDLE ORDER - UPLOAD PAYMENT PROOF (FIXED)
+router.post('/bundle-order/upload-payment', upload.single('payment_proof'), async (req, res) => {
+  let connection; // ✅ DEKLARASIKAN CONNECTION
   try {
-    console.log('📁 NEW Bundle payment proof upload received');
-    
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No file uploaded' 
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
       });
     }
+
+    const { order_reference } = req.body;
     
-    if (!req.body.order_reference) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Order reference is required' 
+    if (!order_reference) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order reference is required'
       });
     }
-    
-    console.log('Bundle payment file:', req.file.filename);
-    console.log('Order reference:', req.body.order_reference);
-    
+
+    console.log('📤 Uploading payment proof for bundle order:', order_reference);
+    console.log('📁 File:', req.file.filename);
+
+    // ✅ DAPATKAN KONEKSI DARI POOL
     connection = await pool.promise().getConnection();
-    
-    // Cek apakah bundle order exists
-    const [orders] = await connection.execute(
-      `SELECT id FROM bookings WHERE booking_reference = ? AND order_type = 'bundle'`,
-      [req.body.order_reference]
+
+    // Update bundle order dengan payment proof
+    const [updateResult] = await connection.execute(
+      'UPDATE bundle_orders SET payment_proof = ?, status = "confirmed" WHERE order_reference = ?',
+      [req.file.filename, order_reference]
     );
-    
-    if (orders.length === 0) {
+
+    if (updateResult.affectedRows === 0) {
       return res.status(404).json({
         success: false,
         message: 'Bundle order not found'
       });
     }
-    
-    // Update dengan payment proof
-    const [result] = await connection.execute(
-      `UPDATE bookings SET 
-        payment_proof = ?,
-        payment_status = 'pending',
-        payment_date = CURRENT_TIMESTAMP
-       WHERE booking_reference = ?`,
-      [req.file.filename, req.body.order_reference]
-    );
-    
-    console.log('✅ NEW Payment proof uploaded for bundle order:', req.body.order_reference);
-    
+
+    console.log('✅ Bundle order updated with payment proof');
+
     res.json({
       success: true,
-      message: 'Bundle payment proof uploaded successfully',
+      message: 'Payment proof uploaded successfully',
       fileName: req.file.filename,
-      filePath: `/uploads/payments/${req.file.filename}`,
-      orderReference: req.body.order_reference
+      filePath: `/uploads/payments/${req.file.filename}`
     });
-    
+
   } catch (error) {
-    console.error('❌ NEW Bundle payment upload error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    console.error('❌ Error uploading payment proof:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload payment proof: ' + error.message
     });
   } finally {
-    if (connection) connection.release();
+    if (connection) connection.release(); // ✅ RELEASE CONNECTION
   }
 });
 
@@ -1317,59 +1194,63 @@ router.post('/bundle-order/upload-payment', upload.single('payment_proof'), asyn
     if (connection) connection.release();
   }
 });
-// ✅ BUNDLE ORDER - CONFIRM PAYMENT
-router.post('/bundle-order/confirm-payment', async (req, res) => {
+// ✅ GET ALL BUNDLE ORDERS (FIXED)
+// ✅ GET BUNDLE ORDSERS BY USERNAME - PERBAIKI INI
+router.get('/bundle-orders', async (req, res) => {
   let connection;
   try {
-    const { order_reference, payment_proof } = req.body;
-
-    console.log('✅ Confirming bundle payment for:', order_reference);
-
-    if (!order_reference) {
+    const username = req.query.username;
+    
+    console.log('👤 Fetching bundle orders for user:', username);
+    
+    if (!username) {
       return res.status(400).json({
         success: false,
-        message: 'Order reference is required'
+        message: 'Username is required',
+        data: []
       });
     }
-
+    
     connection = await pool.promise().getConnection();
-
-    // Update status bundle order
-    const [result] = await connection.execute(
-      `UPDATE bookings SET 
-        status = 'waiting_verification',
-        payment_status = 'pending',
-        payment_date = CURRENT_TIMESTAMP
-       WHERE booking_reference = ? AND order_type = 'bundle'`,
-      [order_reference]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bundle order not found'
-      });
-    }
-
-    console.log('✅ Bundle payment confirmed:', order_reference);
-
-    // Get updated order data
+    
+    // ✅ QUERY YANG BENAR: FILTER BERDASARKAN USERNAME
     const [orders] = await connection.execute(
-      `SELECT * FROM bookings WHERE booking_reference = ? AND order_type = 'bundle'`,
-      [order_reference]
+      `SELECT 
+        id,
+        order_reference as booking_reference,
+        '' as verification_code,
+        customer_name,
+        customer_email,
+        customer_phone,
+        total_price as total_amount,
+        '[]' as seat_numbers,
+        status,
+        order_date as booking_date,
+        bundle_name as movie_title,
+        0 as showtime_id,
+        0 as is_verified,
+        NULL as verified_at,
+        NULL as qr_code_data,
+        'bundle' as order_type
+       FROM bundle_orders 
+       WHERE customer_name = ? OR customer_email = ?
+       ORDER BY order_date DESC`,
+      [username, username]
     );
 
+    console.log(`✅ Found ${orders.length} bundle orders for user: ${username}`);
+    
     res.json({
       success: true,
-      message: 'Bundle payment confirmed successfully',
-      data: orders[0]
+      data: orders
     });
 
   } catch (error) {
-    console.error('❌ Bundle payment confirmation error:', error);
+    console.error('❌ Error fetching bundle orders:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to confirm bundle payment: ' + error.message
+      message: 'Failed to fetch bundle orders: ' + error.message,
+      data: []
     });
   } finally {
     if (connection) connection.release();
